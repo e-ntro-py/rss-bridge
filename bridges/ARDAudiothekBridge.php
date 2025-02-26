@@ -22,6 +22,11 @@ class ARDAudiothekBridge extends BridgeAbstract
      * @const IMAGEWIDTHPLACEHOLDER
      */
     const IMAGEWIDTHPLACEHOLDER = '{width}';
+    /*
+     * File extension appended to image link in $this->icon
+     * @const IMAGEEXTENSION
+     */
+    const IMAGEEXTENSION = '.jpg';
 
     const PARAMETERS = [
         [
@@ -58,11 +63,13 @@ class ARDAudiothekBridge extends BridgeAbstract
 
     public function collectData()
     {
-        $oldTz = date_default_timezone_get();
+        $path = $this->getInput('path');
+        $limit = $this->getInput('limit');
 
+        $oldTz = date_default_timezone_get();
         date_default_timezone_set('Europe/Berlin');
 
-        $pathComponents = explode('/', $this->getInput('path'));
+        $pathComponents = explode('/', $path);
         if (empty($pathComponents)) {
             returnClientError('Path may not be empty');
         }
@@ -77,17 +84,21 @@ class ARDAudiothekBridge extends BridgeAbstract
         }
 
         $url = self::APIENDPOINT . 'programsets/' . $showID . '/';
-        $rawJSON = getContents($url);
-        $processedJSON = json_decode($rawJSON)->data->programSet;
+        $json1 = getContents($url);
+        $data1 = Json::decode($json1, false);
+        $processedJSON = $data1->data->programSet;
+        if (!$processedJSON) {
+            throw new \Exception('Unable to find show id: ' . $showID);
+        }
 
-        $limit = $this->getInput('limit');
         $answerLength = 1;
         $offset = 0;
         $numberOfElements = 1;
 
         while ($answerLength != 0 && $offset < $numberOfElements && (is_null($limit) || $offset < $limit)) {
-            $rawJSON = getContents($url . '?offset=' . $offset);
-            $processedJSON = json_decode($rawJSON)->data->programSet;
+            $json2 = getContents($url . '?offset=' . $offset);
+            $data2 = Json::decode($json2, false);
+            $processedJSON = $data2->data->programSet;
 
             $answerLength = count($processedJSON->items->nodes);
             $offset = $offset + $answerLength;
@@ -108,13 +119,25 @@ class ARDAudiothekBridge extends BridgeAbstract
                 $item['timestamp'] = $audio->publicationStartDateAndTime;
                 $item['uid'] = $audio->id;
                 $item['author'] = $audio->programSet->publicationService->title;
-                $item['categories'] = [ $audio->programSet->editorialCategories->title ];
+
+                $category = $audio->programSet->editorialCategories->title ?? null;
+                if ($category) {
+                    $item['categories'] = [$category];
+                }
+
+                $item['itunes'] = [
+                    'duration' => $audio->duration,
+                ];
+
                 $this->items[] = $item;
             }
         }
         $this->title = $processedJSON->title;
         $this->uri = $processedJSON->sharingUrl;
         $this->icon = str_replace(self::IMAGEWIDTHPLACEHOLDER, self::IMAGEWIDTH, $processedJSON->image->url1X1);
+        // add image file extension to URL so icon is shown in generated RSS feeds, see
+        // https://github.com/RSS-Bridge/rss-bridge/blob/4aed05c7b678b5673386d61374bba13637d15487/formats/MrssFormat.php#L76
+        $this->icon = $this->icon . self::IMAGEEXTENSION;
 
         $this->items = array_slice($this->items, 0, $limit);
 

@@ -1,14 +1,17 @@
 <?php
 
-final class HttpException extends \Exception
-{
-}
-
+// https://github.com/nette/utils/blob/master/src/Utils/Json.php
 final class Json
 {
-    public static function encode($value): string
+    public static function encode($value, $pretty = true, bool $asciiSafe = false): string
     {
-        $flags = JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+        $flags = JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES;
+        if (!$asciiSafe) {
+            $flags = $flags | JSON_UNESCAPED_UNICODE;
+        }
+        if ($pretty) {
+            $flags = $flags | JSON_PRETTY_PRINT;
+        }
         return \json_encode($value, $flags);
     }
 
@@ -47,11 +50,13 @@ function get_current_url(): string
 
 function create_sane_exception_message(\Throwable $e): string
 {
+    $sanitizedMessage = sanitize_root($e->getMessage());
+    $sanitizedFilepath = sanitize_root($e->getFile());
     return sprintf(
         '%s: %s in %s line %s',
         get_class($e),
-        $e->getMessage(),
-        trim_path_prefix($e->getFile()),
+        $sanitizedMessage,
+        $sanitizedFilepath,
         $e->getLine()
     );
 }
@@ -74,7 +79,7 @@ function trace_from_exception(\Throwable $e): array
     $trace = [];
     foreach ($frames as $frame) {
         $trace[] = [
-            'file'      => trim_path_prefix($frame['file'] ?? ''),
+            'file'      => sanitize_root($frame['file'] ?? ''),
             'line'      => $frame['line'] ?? null,
             'class'     => $frame['class'] ?? null,
             'type'      => $frame['type'] ?? null,
@@ -121,13 +126,21 @@ function frame_to_call_point(array $frame): string
  *
  * Example: "/home/davidsf/rss-bridge/index.php" => "index.php"
  */
-function trim_path_prefix(string $filePath): string
+function sanitize_root(string $filePath): string
 {
-    return mb_substr($filePath, mb_strlen(dirname(__DIR__)) + 1);
+    // Root folder of the project e.g. /home/satoshi/repos/rss-bridge
+    $root = dirname(__DIR__);
+    return _sanitize_path_name($filePath, $root);
+}
+
+function _sanitize_path_name(string $s, string $pathName): string
+{
+    // Remove all occurrences of $pathName in the string
+    return str_replace(["$pathName/", $pathName], '', $s);
 }
 
 /**
- * This is buggy because strip tags removes a lot that isn't html
+ * This is buggy because strip_tags() removes a lot that isn't html
  */
 function is_html(string $text): bool
 {
@@ -158,6 +171,7 @@ function parse_mime_type($url)
             'jpg' => 'image/jpeg',
             'gif' => 'image/gif',
             'png' => 'image/png',
+            'webp' => 'image/webp',
             'image' => 'image/*',
             'mp3' => 'audio/mpeg',
         ];
@@ -217,4 +231,19 @@ function format_bytes(int $bytes, $precision = 2)
 function now(): \DateTimeImmutable
 {
     return new \DateTimeImmutable();
+}
+
+function create_random_string(int $bytes = 16): string
+{
+    return bin2hex(openssl_random_pseudo_bytes($bytes));
+}
+
+function returnClientError($message)
+{
+    throw new \Exception($message, 400);
+}
+
+function returnServerError($message)
+{
+    throw new \Exception($message, 500);
 }
